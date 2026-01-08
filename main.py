@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 from database import Database
 from keyboards import Keyboards
-from keep_alive import keep_alive
+from keep_alive import init_keep_alive
 
 # .env faylini yuklash
 load_dotenv()
@@ -86,98 +86,43 @@ if ADMIN_ID:
     except:
         pass
 
-# ========== FLASK SERVER - RENDER UCHUN ==========
+# ========== FLASK SERVER - MULTIPROCESSING ==========
+import multiprocessing
+
 def run_flask_server():
-    """Flask serverini ishga tushiradi"""
+    """Flask serverini alohida protsessda ishga tushiradi"""
     try:
         from flask import Flask
+        import os
+        
         app = Flask(__name__)
         
         @app.route('/')
         def home():
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            return f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>🎬 Kino Bot</title>
-                <style>
-                    body {{
-                        font-family: Arial, sans-serif;
-                        text-align: center;
-                        padding: 50px;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                    }}
-                    .container {{
-                        background: rgba(255, 255, 255, 0.1);
-                        padding: 30px;
-                        border-radius: 20px;
-                        backdrop-filter: blur(10px);
-                        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-                    }}
-                    h1 {{
-                        font-size: 3em;
-                        margin-bottom: 20px;
-                    }}
-                    .status {{
-                        font-size: 1.5em;
-                        margin: 20px 0;
-                        color: #4CAF50;
-                    }}
-                    .info {{
-                        background: rgba(255, 255, 255, 0.2);
-                        padding: 20px;
-                        border-radius: 10px;
-                        margin: 20px 0;
-                    }}
-                </style>
-                <meta http-equiv="refresh" content="30">
-            </head>
-            <body>
-                <div class="container">
-                    <h1>🎬 Kino Bot</h1>
-                    <div class="status">✅ Bot ishlayapti!</div>
-                    <div class="info">
-                        <p><strong>🛡️ Himoya:</strong> FAOL</p>
-                        <p><strong>📊 Monitoring:</strong> 24/7</p>
-                        <p><strong>⏰ Vaqt:</strong> {current_time}</p>
-                        <p><strong>🔧 Platforma:</strong> Render</p>
-                    </div>
-                    <p>Bot faol holatda. Hech narsa qilish shart emas.</p>
-                </div>
-            </body>
-            </html>
-            """
+            return f"Bot ishlayapti! Vaqt: {current_time}"
         
         @app.route('/health')
         def health():
             return "OK", 200
         
-        @app.route('/status')
-        def status():
-            return {
-                "status": "running",
-                "bot": "active",
-                "timestamp": datetime.now().isoformat(),
-                "platform": "render"
-            }
-        
-        # Portni Render muhitidan olish
         port = int(os.environ.get("PORT", 8080))
-        print(f"🌐 Flask server {port}-portda ishga tushmoqda...")
         
-        # Development mode o'chirilgan
+        # Debug mode o'chirilgan, threaded=True
         app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
         
     except Exception as e:
         print(f"❌ Flask server xatosi: {e}")
 
-def start_flask_in_thread():
-    """Flask serverni threadda ishga tushiradi"""
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
-    print("✅ Flask server threadda ishga tushirildi")
+def start_flask_in_separate_process():
+    """Flask serverni alohida protsessda ishga tushiradi"""
+    flask_process = multiprocessing.Process(
+        target=run_flask_server,
+        daemon=True
+    )
+    flask_process.start()
+    print(f"✅ Flask server {flask_process.pid} PID bilan ishga tushirildi")
+    return flask_process
 
 # ========== ADMIN TEKSHIRISH FUNKSIYASI ==========
 def is_admin(user_id):
@@ -2589,6 +2534,9 @@ async def debug_command(message: Message, state: FSMContext):
     await message.answer(debug_text)
 
 # ========== ASOSIY FUNKSIYA ==========
+# ... faylning bosh qismi bir xil ...
+
+# ========== ASOSIY FUNKSIYA ==========
 async def main():
     print("=" * 60)
     print("🤖 KINO BOT - KUCHAYTIRILGAN HIMOYA VERSIYASI")
@@ -2598,76 +2546,73 @@ async def main():
     print("🛡️ Himoya: FAOL")
     print("=" * 60)
     
-    # 1. Flask serverini ishga tushirish
-    print("\n🌐 Flask serverini ishga tushirish...")
     try:
-        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-        flask_thread.start()
-        print("✅ Flask server muvaffaqiyatli ishga tushirildi")
-    except Exception as e:
-        print(f"⚠️ Flask server xatosi: {e}")
-    
-    # 2. Himoya jadvallarini yaratish
-    print("\n🔒 Himoya jadvallarini yaratish...")
-    try:
+        # 1. Keep-Alive monitoringni ishga tushirish
+        print("\n📡 Keep-Alive monitoringni ishga tushirish...")
+        try:
+            from keep_alive import init_keep_alive, get_keep_alive
+            keeper = init_keep_alive(interval=300)  # 5 daqiqa interval
+            keeper.start()
+            print("✅ Keep-Alive monitoring ishga tushirildi")
+        except Exception as e:
+            print(f"⚠️ Keep-Alive da xatolik: {e}")
+            keeper = None
+        
+        # 2. Himoya jadvallarini yaratish
+        print("\n🔒 Himoya jadvallarini yaratish...")
         db.create_protection_tables()
-        print("✅ Himoya jadvallari muvaffaqiyatli yaratildi")
-    except Exception as e:
-        print(f"⚠️ Himoya jadvallar xatosi: {e}")
-    
-    # 3. Admin routerini import qilish
-    print("\n👑 Admin routerini yuklash...")
-    try:
-        from admin import admin_router, setup_admin_bot
+        print("✅ Himoya jadvallari yaratildi")
         
-        setup_admin_bot(bot)
-        dp.include_router(admin_router)
-        print("✅ Admin router muvaffaqiyatli yuklandi!")
-    except ImportError as e:
-        print(f"❌ Admin router yuklanmadi: {e}")
-        print("⚠️ Admin funksiyalari ishlamaydi!")
-    except Exception as e:
-        print(f"❌ Admin router sozlashda xatolik: {e}")
-    
-    # 4. Himoya middleware qo'shish
-    print("\n🛡️ Himoya middleware ni sozlash...")
-    try:
-        dp.message.middleware(EnhancedProtectionMiddleware())
-        print("✅ Himoya middleware muvaffaqiyatli qo'shildi")
-    except Exception as e:
-        print(f"⚠️ Himoya middleware xatosi: {e}")
-    
-    # 5. Himoya configini chiqarish
-    print("\n🔧 KUCHAYTIRILGAN HIMOYA SOZLAMALARI:")
-    for key, value in PROTECTION_CONFIG.items():
-        if isinstance(value, dict):
-            print(f"  • {key}:")
-            for sub_key, sub_value in value.items():
-                print(f"    - {sub_key}: {sub_value}")
-        else:
-            print(f"  • {key}: {value}")
-    
-    print("\n" + "=" * 60)
-    print("✅ BOT TO'LIQ TAYYOR!")
-    print("🛡️ Himoya: FAOL (Android/iOS/Windows)")
-    print("📊 Monitoring: FAOL (24/7)")
-    print("🚨 Avtomatik blok: FAOL (3 urinish)")
-    print("🌐 Web Server: FAOL (Render)")
-    print("=" * 60)
-    
-    # 6. Botni ishga tushirish
-    print("\n⏳ Bot Telegram serverlariga ulanmoqda...")
-    try:
-        # Botni ishga tushirish
-        await dp.start_polling(bot, skip_updates=True, timeout=60)
-        print("✅ Bot muvaffaqiyatli ishga tushdi va ishlayapti!")
+        # 3. Admin routerini tekshirish
+        print("\n👑 Admin routerini tekshirish...")
+        try:
+            # Admin router allaqachon qo'shilganligini tekshirish
+            from admin import admin_router, setup_admin_bot
+            setup_admin_bot(bot)
+            
+            # Agar router allaqachon qo'shilmagan bo'lsa, qo'shamiz
+            if admin_router not in dp.sub_routers:
+                dp.include_router(admin_router)
+                print("✅ Admin router qo'shildi")
+            else:
+                print("✅ Admin router allaqachon qo'shilgan")
+                
+        except ImportError as e:
+            print(f"❌ Admin moduli yuklanmadi: {e}")
+        except Exception as e:
+            print(f"⚠️ Admin router sozlashda xatolik: {e}")
         
-    except KeyboardInterrupt:
-        print("\n🛑 Bot foydalanuvchi tomonidan to'xtatildi!")
+        # 4. Himoya middleware qo'shish
+        print("\n🛡️ Himoya middleware qo'shish...")
+        try:
+            dp.message.middleware(EnhancedProtectionMiddleware())
+            print("✅ Himoya middleware qo'shildi")
+        except Exception as e:
+            print(f"⚠️ Himoya middleware xatosi: {e}")
+        
+        print("\n" + "=" * 60)
+        print("✅ BOT TO'LIQ TAYYOR!")
+        print("📡 Keep-Alive: FAOL")
+        print("🛡️ Himoya: FAOL")
+        print("🌐 Web Server: FAOL")
+        print("=" * 60)
+        
+        # 5. Botni ishga tushirish
+        print("\n🤖 Bot Telegram API ga ulanmoqda...")
+        await dp.start_polling(bot, skip_updates=True, timeout=30)
+        
     except Exception as e:
-        print(f"❌ Bot ishga tushirishda xatolik: {e}")
+        print(f"❌ Bot ishlashda xatolik: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Monitoringni to'xtatish
+        try:
+            if keeper:
+                keeper.stop()
+                keeper.show_stats()
+        except:
+            pass
 
 # ========== Dasturni Ishga tushirish ==========
 if __name__ == "__main__":
@@ -2681,14 +2626,19 @@ if __name__ == "__main__":
     flask_thread.start()
     
     # Flask ishga tushishini kutish
-    print("⏳ Flask ishga tushishini kutish (5 soniya)...")
+    print("⏳ Flask ishga tushishini kutish (3 soniya)...")
     import time
-    time.sleep(5)
+    time.sleep(3)
     
     # Endi botni ishga tushirish
     print("🤖 Botni ishga tushirish...")
+    
+    # Yagona asyncio loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
-        asyncio.run(main())
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
         print("\n🛑 Bot foydalanuvchi tomonidan to'xtatildi!")
     except Exception as e:
@@ -2696,4 +2646,14 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
+        # Loop ni toza qilish
+        try:
+            if not loop.is_closed():
+                loop.run_until_complete(loop.shutdown_asyncgens())
+        except:
+            pass
+            
+        if not loop.is_closed():
+            loop.close()
+            
         print("👋 Bot yopildi. Xayr!")
