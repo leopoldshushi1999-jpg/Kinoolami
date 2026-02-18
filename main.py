@@ -2615,22 +2615,89 @@ async def main():
             pass
 
 # ========== Dasturni Ishga tushirish ==========
+# main.py faylining eng oxirgi qismini quyidagi kod bilan almashtiring:
+
+# ========== Dasturni Ishga tushirish ==========
 if __name__ == "__main__":
     # Windows uchun asyncio policy sozlamalari
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
-    # Flask serverni ALBATTA birinchi ishga tushiramiz
-    print("🚀 Flask serverni ishga tushirish...")
+    print("🚀 Botni ishga tushirish...")
+    
+    # FLASK SERVER - alohida thread da ishga tushirish (YAXSHILANGAN VERSIYA)
+    def run_flask_server():
+        """Flask serverini alohida threadda ishga tushiradi - yaxshilangan versiya"""
+        try:
+            from flask import Flask, jsonify
+            import os
+            import logging
+            
+            # Flask loglarini kamaytirish
+            log = logging.getLogger('werkzeug')
+            log.setLevel(logging.ERROR)
+            
+            app = Flask(__name__)
+            
+            @app.route('/')
+            def home():
+                return jsonify({
+                    "status": "ok",
+                    "message": "Bot ishlayapti!",
+                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+            
+            @app.route('/health')
+            @app.route('/healthz')
+            @app.route('/ping')
+            def health():
+                return jsonify({
+                    "status": "healthy",
+                    "timestamp": datetime.now().isoformat(),
+                    "uptime": str(datetime.now() - start_time) if 'start_time' in globals() else "unknown"
+                }), 200
+            
+            port = int(os.environ.get("PORT", 8080))
+            
+            print(f"✅ Flask server http://0.0.0.0:{port} da ishga tushmoqda")
+            print(f"📡 Health check endpoint: http://0.0.0.0:{port}/health")
+            
+            # Flask serverni ishga tushirish
+            app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+            
+        except Exception as e:
+            print(f"❌ Flask server xatosi: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Start time ni saqlash
+    start_time = datetime.now()
+    
+    # Flask serverni threadda ishga tushirish
+    print("⏳ Flask serverni ishga tushirish...")
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
     # Flask ishga tushishini kutish
     print("⏳ Flask ishga tushishini kutish (3 soniya)...")
-    import time
     time.sleep(3)
     
-    # Endi botni ishga tushirish
+    # Keep-Alive monitoringni ishga tushirish
+    print("📡 Keep-Alive monitoringni ishga tushirish...")
+    try:
+        # Yangi URL bilan - asosiy sahifaga so'rov yuborish
+        from keep_alive import init_keep_alive
+        
+        # Render URL yoki localhost
+        render_url = os.environ.get('RENDER_URL', 'https://kino-bot-5px6.onrender.com')
+        keeper = init_keep_alive(url=render_url, interval=240)  # 4 daqiqa
+        keeper.start()
+        print("✅ Keep-Alive monitoring ishga tushirildi")
+    except Exception as e:
+        print(f"⚠️ Keep-Alive da xatolik: {e}")
+        keeper = None
+    
+    # Botni ishga tushirish
     print("🤖 Botni ishga tushirish...")
     
     # Yagona asyncio loop
@@ -2655,5 +2722,10 @@ if __name__ == "__main__":
             
         if not loop.is_closed():
             loop.close()
+        
+        # Monitoringni to'xtatish
+        if keeper:
+            keeper.stop()
+            keeper.show_stats()
             
         print("👋 Bot yopildi. Xayr!")

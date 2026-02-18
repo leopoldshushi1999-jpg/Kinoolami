@@ -1,6 +1,7 @@
+# keep_alive.py faylini quyidagi kod bilan almashtiring:
+
 """
-📡 Render uchun Keep-Alive va Monitoring tizimi
-Bu fayl botning 24/7 ishlashini ta'minlaydi
+📡 Render uchun Keep-Alive va Monitoring tizimi - YANGILANGAN VERSIYA
 """
 
 import requests
@@ -10,22 +11,27 @@ import os
 from datetime import datetime
 
 class KeepAlive:
-    """Render uchun Keep-Alive va Monitoring klassi"""
+    """Render uchun Keep-Alive va Monitoring klassi - yaxshilangan versiya"""
     
-    def __init__(self, url=None, interval=300):
+    def __init__(self, url=None, interval=240):
         """
-        KeepAlive klassi - Botning doimiy ishlashini ta'minlash
-        
         Args:
-            url (str): Monitoring qilinadigan URL (default: Render URL)
-            interval (int): Ping intervali sekundlarda (default: 300 = 5 minut)
+            url (str): Monitoring qilinadigan URL (asosiy sahifa)
+            interval (int): Ping intervali sekundlarda (default: 240 = 4 minut)
         """
         # Render URL ni aniqlash
-        self.url = url or os.environ.get('RENDER_URL', 'https://kino-bot-5px6.onrender.com')
+        base_url = url or os.environ.get('RENDER_URL', 'https://kino-bot-5px6.onrender.com')
         
-        # Health check endpoint qo'shamiz
-        if not self.url.endswith('/health'):
-            self.url = f"{self.url}/health" if not self.url.endswith('/') else f"{self.url}health"
+        # URL dan trailing slash ni olib tashlash
+        base_url = base_url.rstrip('/')
+        
+        # Bir nechta endpointlarni saqlash
+        self.endpoints = [
+            f"{base_url}/health",
+            f"{base_url}/healthz", 
+            f"{base_url}/ping",
+            base_url  # asosiy sahifa
+        ]
         
         self.interval = interval
         self.thread = None
@@ -34,54 +40,57 @@ class KeepAlive:
         self.ping_count = 0
         self.success_count = 0
         self.fail_count = 0
+        self.current_endpoint_index = 0
         
     def ping(self):
         """URL ga HTTP so'rov yuborish va holatni tekshirish"""
         self.ping_count += 1
         
+        # Endpointlarni aylantirib tekshirish
+        url = self.endpoints[self.current_endpoint_index]
+        self.current_endpoint_index = (self.current_endpoint_index + 1) % len(self.endpoints)
+        
         try:
             start_time = time.time()
-            response = requests.get(self.url, timeout=15)
+            response = requests.get(url, timeout=10, allow_redirects=True)
             end_time = time.time()
             response_time = round((end_time - start_time) * 1000, 2)  # ms
             
-            if response.status_code == 200:
+            status_emoji = "🟢" if response.status_code == 200 else "🟡"
+            status_text = f"{response.status_code} {response.reason}"
+            
+            # Muvaffaqiyatli deb hisoblash
+            if response.status_code < 500:  # 200-499 oralig'idagi kodlar
                 self.success_count += 1
-                status = "✅ OK"
-                emoji = "🟢"
+                success = True
             else:
                 self.fail_count += 1
-                status = f"⚠️ {response.status_code}"
-                emoji = "🟡"
+                success = False
             
-            print(f"{emoji} Ping #{self.ping_count}: {status} | "
-                  f"Response: {response_time}ms | "
-                  f"Time: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"{status_emoji} Ping #{self.ping_count}: {status_text} | "
+                  f"{response_time}ms | {url.split('/')[-1] or 'root'}")
             
-            return True
+            return success
             
         except requests.exceptions.Timeout:
             self.fail_count += 1
-            print(f"🔴 Ping #{self.ping_count}: Timeout (15s) | "
-                  f"Time: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"🔴 Ping #{self.ping_count}: Timeout (10s) | {url}")
             return False
             
         except requests.exceptions.ConnectionError:
             self.fail_count += 1
-            print(f"🔴 Ping #{self.ping_count}: Connection Error | "
-                  f"Time: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"🔴 Ping #{self.ping_count}: Connection Error | {url}")
             return False
             
         except Exception as e:
             self.fail_count += 1
-            print(f"🔴 Ping #{self.ping_count}: Error - {str(e)[:50]}... | "
-                  f"Time: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"🔴 Ping #{self.ping_count}: Error - {str(e)[:30]} | {url}")
             return False
     
     def _run_monitoring(self):
         """Monitoring thread - doimiy ping yuborish"""
         print(f"📡 Monitoring boshlanmoqda...")
-        print(f"🌐 Target URL: {self.url}")
+        print(f"🌐 Endpoints: {', '.join(self.endpoints)}")
         print(f"⏰ Interval: {self.interval} soniya")
         
         while self.running:
@@ -107,7 +116,7 @@ class KeepAlive:
         print("=" * 60)
         print("✅ KEEP-ALIVE VA MONITORING ISHGA TUSHIRILDI!")
         print(f"📅 Boshlangan vaqt: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"🌐 Monitoring URL: {self.url}")
+        print(f"🌐 Endpoints: {len(self.endpoints)} ta")
         print(f"⏱️  Ping interval: {self.interval} soniya")
         print("=" * 60)
     
@@ -122,7 +131,6 @@ class KeepAlive:
     def show_stats(self):
         """Joriy statistikani ko'rsatish"""
         if self.ping_count == 0:
-            print("📊 Hech qanday ping yuborilmagan")
             return
         
         success_rate = (self.success_count / self.ping_count) * 100
@@ -131,34 +139,19 @@ class KeepAlive:
         print("\n" + "=" * 60)
         print("📊 KEEP-ALIVE STATISTIKASI")
         print("=" * 60)
-        print(f"📅 Monitoring boshlangan: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📅 Boshlangan: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"⏱️  Uptime: {uptime_minutes:.1f} daqiqa")
         print(f"📨 Jami pinglar: {self.ping_count}")
         print(f"✅ Muvaffaqiyatli: {self.success_count}")
         print(f"❌ Muvaffaqiyatsiz: {self.fail_count}")
-        print(f"📈 Muvaffaqiyat darajasi: {success_rate:.1f}%")
-        print(f"🌐 URL: {self.url}")
+        print(f"📈 Muvaffaqiyat: {success_rate:.1f}%")
         print("=" * 60 + "\n")
-    
-    def health_check(self):
-        """Tezkor health check"""
-        print("🔍 Health check amalga oshirilmoqda...")
-        return self.ping()
 
 # Global KeepAlive obyekti
 _keep_alive_instance = None
 
-def init_keep_alive(url=None, interval=300):
-    """
-    KeepAlive ni ishga tushirish (asosiy funksiya)
-    
-    Args:
-        url (str): Monitoring URL
-        interval (int): Ping intervali (default: 300s = 5 minut)
-    
-    Returns:
-        KeepAlive: KeepAlive obyekti
-    """
+def init_keep_alive(url=None, interval=240):
+    """KeepAlive ni ishga tushirish"""
     global _keep_alive_instance
     
     if _keep_alive_instance is None:
@@ -169,20 +162,3 @@ def init_keep_alive(url=None, interval=300):
 def get_keep_alive():
     """Global KeepAlive obyektini olish"""
     return _keep_alive_instance
-
-# Test uchun
-if __name__ == "__main__":
-    print("🧪 KeepAlive sinov rejimi...")
-    
-    # Test uchun localhost URL
-    keeper = init_keep_alive(url="http://localhost:8080/health", interval=10)
-    keeper.start()
-    
-    try:
-        # 1 daqiqa davomida test qilish
-        time.sleep(60)
-        keeper.show_stats()
-        keeper.stop()
-    except KeyboardInterrupt:
-        print("\n🛑 Foydalanuvchi tomonidan to'xtatildi")
-        keeper.stop()

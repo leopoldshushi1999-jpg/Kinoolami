@@ -1179,16 +1179,22 @@ async def confirm_addition(message: Message, state: FSMContext):
 # ==================== DELETE CONTENT IMPROVED ====================
 @admin_router.message(F.text == "🗑️ Kontent O'chirish")
 async def delete_content_start(message: Message, state: FSMContext):
-    """Kontent o'chirishni boshlash"""
+    """Kontent o'chirishni boshlash - TO'G'RI VERSIYA"""
     if not is_admin(message.from_user.id):
+        await message.answer("❌ Siz admin emassiz!")
         return
     
+    # STATE ni tozalash
     await state.clear()
+    
+    # To'g'ri state ni o'rnatish
+    await state.set_state(DeleteMovieStates.waiting_for_method)
     
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🔍 ID bo'yicha o'chirish"), KeyboardButton(text="📂 Kategoriya bo'yicha")],
-            [KeyboardButton(text="🗑️ Barcha filmlarni o'chirish"), KeyboardButton(text="⬅️ Ortga")]
+            [KeyboardButton(text="🗑️ Barcha filmlarni o'chirish"), KeyboardButton(text="⬅️ Ortga")],
+            [KeyboardButton(text="👑 Admin paneli")]
         ],
         resize_keyboard=True
     )
@@ -1198,7 +1204,6 @@ async def delete_content_start(message: Message, state: FSMContext):
         "Qanday usulda o'chirmoqchisiz?",
         reply_markup=keyboard
     )
-    await state.set_state(DeleteMovieStates.waiting_for_method)
 
 # ==================== DELETE BY METHOD SELECTION ====================
 @admin_router.message(DeleteMovieStates.waiting_for_method)
@@ -1209,6 +1214,7 @@ async def delete_method_selection(message: Message, state: FSMContext):
         return
     
     if message.text == "🔍 ID bo'yicha o'chirish":
+        await state.set_state(DeleteMovieStates.waiting_for_movie_id)
         await message.answer(
             "🔍 **ID bo'yicha o'chirish**\n\n"
             "O'chirmoqchi bo'lgan film ID sini kiriting:\n\n"
@@ -1218,9 +1224,9 @@ async def delete_method_selection(message: Message, state: FSMContext):
                 resize_keyboard=True
             )
         )
-        await state.set_state(DeleteMovieStates.waiting_for_movie_id)
         
     elif message.text == "📂 Kategoriya bo'yicha":
+        await state.set_state(DeleteMovieStates.waiting_for_category)
         kb = Keyboards('uz')
         
         await message.answer(
@@ -1228,9 +1234,9 @@ async def delete_method_selection(message: Message, state: FSMContext):
             "Kategoriyani tanlang:",
             reply_markup=kb.admin_categories_menu()
         )
-        await state.set_state(DeleteMovieStates.waiting_for_category)
         
     elif message.text == "🗑️ Barcha filmlarni o'chirish":
+        await state.set_state(DeleteMovieStates.waiting_for_all_confirmation)
         await message.answer(
             "⚠️ **DIQQAT!**\n\n"
             "Siz BAZADAGI BARCHA FILMLARNI o'chirmoqchisiz!\n\n"
@@ -1244,10 +1250,9 @@ async def delete_method_selection(message: Message, state: FSMContext):
                 resize_keyboard=True
             )
         )
-        await state.set_state(DeleteMovieStates.waiting_for_all_confirmation)
         
     else:
-        await message.answer("❌ Noto'g'ri tanlov!")
+        await message.answer("❌ Noto'g'ri tanlov! Qayta tanlang.")
 
 # ==================== DELETE BY MOVIE ID ====================
 @admin_router.message(DeleteMovieStates.waiting_for_movie_id)
@@ -1278,7 +1283,9 @@ async def delete_by_id(message: Message, state: FSMContext):
         )
         return
     
+    # State ni yangilash
     await state.update_data(movie_id=movie_id, movie_info=movie)
+    await state.set_state(DeleteMovieStates.waiting_for_confirmation)
     
     movie_info = f"""🎬 **Film ma'lumotlari:**
 
@@ -1304,12 +1311,13 @@ async def delete_by_id(message: Message, state: FSMContext):
     )
     
     await message.answer(movie_info, reply_markup=keyboard)
-    await state.set_state(DeleteMovieStates.waiting_for_confirmation)
 
 # ==================== DELETE BY CATEGORY ====================
 @admin_router.message(DeleteMovieStates.waiting_for_category)
 async def delete_by_category(message: Message, state: FSMContext):
     """Kategoriya bo'yicha film o'chirish"""
+    print(f"DEBUG: delete_by_category called with text: {message.text}")
+    
     if message.text == "⬅️ Ortga":
         await delete_content_start(message, state)
         return
@@ -1334,14 +1342,17 @@ async def delete_by_category(message: Message, state: FSMContext):
     }
     
     if message.text not in category_map:
-        await message.answer("❌ Noto'g'ri kategoriya!")
+        await message.answer("❌ Noto'g'ri kategoriya! Iltimos, tugmalardan foydalaning.")
         return
     
     main_category = category_map[message.text]
-    await state.update_data(main_category=main_category, category_name=message.text)
+    
+    print(f"DEBUG: Selected category: {main_category}")
     
     # Kategoriyadagi filmlar soni
     movies_count = db.get_movies_count_by_category(main_category)
+    
+    print(f"DEBUG: Movies count in category: {movies_count}")
     
     if movies_count == 0:
         await message.answer(
@@ -1356,85 +1367,134 @@ async def delete_by_category(message: Message, state: FSMContext):
     # Kategoriyadagi filmlarni olish
     movies = db.get_movies_by_main_category(main_category)
     
-    # Filmlarni guruhlab ko'rsatish (har bir guruh 10 tadan)
-    page_size = 10
-    pages = (movies_count + page_size - 1) // page_size
+    print(f"DEBUG: Found {len(movies)} movies in database")
     
-    await state.update_data(all_movies=movies, current_page=1, total_pages=pages)
+    if not movies:
+        await message.answer(
+            f"❌ **{message.text}** kategoriyasida filmlar topilmadi!",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="⬅️ Ortga")]],
+                resize_keyboard=True
+            )
+        )
+        return
+    
+    # State ga ma'lumotlarni saqlash
+    await state.update_data(
+        main_category=main_category, 
+        category_name=message.text,
+        all_movies=movies,
+        current_page=1,
+        total_pages=max(1, (len(movies) + 9) // 10)  # Har sahifada 10 ta film
+    )
+    
+    print(f"DEBUG: State updated, showing page 1")
     
     # Birinchi sahifani ko'rsatish
     await show_category_page(message, state)
 
 async def show_category_page(message: Message, state: FSMContext):
     """Kategoriya sahifasini ko'rsatish"""
-    data = await state.get_data()
-    movies = data.get('all_movies', [])
-    current_page = data.get('current_page', 1)
-    total_pages = data.get('total_pages', 1)
-    category_name = data.get('category_name', '')
-    
-    page_size = 10
-    start_idx = (current_page - 1) * page_size
-    end_idx = min(start_idx + page_size, len(movies))
-    
-    movies_text = f"📂 **{category_name}**\n\n"
-    movies_text += f"📊 Jami filmlar: {len(movies)} ta\n"
-    movies_text += f"📄 Sahifa: {current_page}/{total_pages}\n\n"
-    
-    # Sahifadagi filmlarni ro'yxati
-    page_movies = []
-    for i in range(start_idx, end_idx):
-        movie = movies[i]
-        item_num = i + 1
+    try:
+        data = await state.get_data()
+        movies = data.get('all_movies', [])
+        current_page = data.get('current_page', 1)
+        total_pages = data.get('total_pages', 1)
+        category_name = data.get('category_name', '')
         
-        movies_text += f"{item_num}. **{movie[3]}**\n"
-        movies_text += f"   🆔 ID: {movie[0]}\n"
-        movies_text += f"   💰 Holat: {'💰 Pullik' if movie[10] == 1 else '🆓 Bepul'}\n"
-        if movie[10] == 1:
-            movies_text += f"   💵 Narx: {movie[11]:,} so'm\n"
-        movies_text += f"   📖 {movie[4][:50]}{'...' if len(movie[4]) > 50 else ''}\n"
-        movies_text += f"   👁️ {movie[8]} ko'rish\n"
-        movies_text += "─" * 30 + "\n"
+        if not movies:
+            await message.answer("❌ Filmlar topilmadi!", reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="⬅️ Ortga")]],
+                resize_keyboard=True
+            ))
+            return
         
-        page_movies.append(movie)
-    
-    await state.update_data(page_movies=page_movies)
-    
-    # Sahifalash tugmalari
-    keyboard_buttons = []
-    
-    # Har bir film uchun tugma
-    for i, movie in enumerate(page_movies, 1):
-        keyboard_buttons.append([KeyboardButton(text=f"🗑️ {i}. {movie[3][:20]}{'...' if len(movie[3]) > 20 else ''}")])
-    
-    # Navigatsiya tugmalari
-    nav_buttons = []
-    if current_page > 1:
-        nav_buttons.append(KeyboardButton(text="⬅️ Oldingi"))
-    if current_page < total_pages:
-        nav_buttons.append(KeyboardButton(text="Keyingi ➡️"))
-    
-    if nav_buttons:
-        keyboard_buttons.append(nav_buttons)
-    
-    keyboard_buttons.append([
-        KeyboardButton(text="🎯 Tanlash orqali o'chirish"),
-        KeyboardButton(text="📝 ID kirish orqali")
-    ])
-    
-    keyboard_buttons.append([KeyboardButton(text="⬅️ Ortga")])
-    
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=keyboard_buttons,
-        resize_keyboard=True
-    )
-    
-    await message.answer(movies_text, reply_markup=keyboard)
-    await state.set_state(DeleteMovieStates.waiting_for_movie_selection)
+        page_size = 10
+        start_idx = (current_page - 1) * page_size
+        end_idx = min(start_idx + page_size, len(movies))
+        
+        movies_text = f"📂 **{category_name}**\n\n"
+        movies_text += f"📊 Jami filmlar: {len(movies)} ta\n"
+        movies_text += f"📄 Sahifa: {current_page}/{total_pages}\n\n"
+        
+        # Sahifadagi filmlarni ro'yxati
+        page_movies = []
+        for i in range(start_idx, end_idx):
+            movie = movies[i]
+            item_num = i + 1
+            
+            # Film ma'lumotlarini formatlash
+            movie_title = movie[3] if len(movie) > 3 else "Noma'lum"
+            movie_id = movie[0] if len(movie) > 0 else "N/A"
+            is_premium = movie[10] == 1 if len(movie) > 10 else False
+            price = movie[11] if len(movie) > 11 else 0
+            description = movie[4] if len(movie) > 4 else "Tavsif yo'q"
+            views = movie[8] if len(movie) > 8 else 0
+            
+            movies_text += f"{item_num}. **{movie_title}**\n"
+            movies_text += f"   🆔 ID: {movie_id}\n"
+            movies_text += f"   💰 Holat: {'💰 Pullik' if is_premium else '🆓 Bepul'}\n"
+            if is_premium:
+                movies_text += f"   💵 Narx: {price:,} so'm\n"
+            movies_text += f"   📖 {description[:50]}{'...' if len(description) > 50 else ''}\n"
+            movies_text += f"   👁️ {views} ko'rish\n"
+            movies_text += "─" * 30 + "\n"
+            
+            page_movies.append(movie)
+        
+        # State ga sahifa filmlarini saqlash
+        await state.update_data(page_movies=page_movies)
+        
+        # Sahifalash tugmalarini yaratish
+        keyboard_buttons = []
+        
+        # Har bir film uchun tugma
+        for i, movie in enumerate(page_movies, 1):
+            movie_title = movie[3] if len(movie) > 3 else "Noma'lum"
+            keyboard_buttons.append([
+                KeyboardButton(text=f"🗑️ {i}. {movie_title[:20]}{'...' if len(movie_title) > 20 else ''}")
+            ])
+        
+        # Navigatsiya tugmalari
+        nav_buttons = []
+        if current_page > 1:
+            nav_buttons.append(KeyboardButton(text="⬅️ Oldingi"))
+        if current_page < total_pages:
+            nav_buttons.append(KeyboardButton(text="Keyingi ➡️"))
+        
+        if nav_buttons:
+            keyboard_buttons.append(nav_buttons)
+        
+        # Qo'shimcha amallar
+        keyboard_buttons.append([
+            KeyboardButton(text="🎯 Tanlash orqali o'chirish"),
+            KeyboardButton(text="📝 ID kirish orqali")
+        ])
+        
+        keyboard_buttons.append([KeyboardButton(text="⬅️ Ortga")])
+        
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=keyboard_buttons,
+            resize_keyboard=True
+        )
+        
+        await message.answer(movies_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        print(f"Error in show_category_page: {e}")
+        await message.answer(
+            f"❌ Xatolik yuz berdi: {str(e)[:100]}",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="⬅️ Ortga")]],
+                resize_keyboard=True
+            )
+        )
 
 @admin_router.message(DeleteMovieStates.waiting_for_movie_selection)
 async def handle_category_movie_selection(message: Message, state: FSMContext):
     """Kategoriyadagi filmni tanlash"""
+    print(f"DEBUG: handle_category_movie_selection called with: {message.text}")
+    
     if message.text == "⬅️ Ortga":
         await delete_content_start(message, state)
         return
@@ -1478,20 +1538,25 @@ async def handle_category_movie_selection(message: Message, state: FSMContext):
         await state.set_state(DeleteMovieStates.waiting_for_movie_id)
         return
     
-    # Agar film nomi bilan tanlangan bo'lsa
+    # Agar film nomi bilan tanlangan bo'lsa (tugma bosilgan)
     if message.text.startswith("🗑️"):
-        # Tugma matnidan film raqamini ajratib olish
         try:
-            movie_num = int(message.text.split('.')[0].replace('🗑️', '').strip())
+            # Tugma matnidan film raqamini ajratib olish
+            movie_num_text = message.text.split('.')[0].replace('🗑️', '').strip()
+            movie_num = int(movie_num_text)
+            
             data = await state.get_data()
             page_movies = data.get('page_movies', [])
             
             if 1 <= movie_num <= len(page_movies):
                 selected_movie = page_movies[movie_num - 1]
                 await show_movie_confirmation(message, state, selected_movie)
-                return
-        except:
-            pass
+            else:
+                await message.answer(f"❌ Noto'g'ri raqam! 1-{len(page_movies)} oralig'ida kiriting.")
+        except (ValueError, IndexError) as e:
+            print(f"Error parsing movie number: {e}")
+            await message.answer("❌ Film raqamini aniqlashda xatolik! Iltimos, tugmalardan foydalaning.")
+        return
     
     await message.answer("❌ Noto'g'ri tanlov! Iltimos, tugmalardan foydalaning.")
 
@@ -1500,7 +1565,8 @@ async def handle_movie_number(message: Message, state: FSMContext):
     """Film raqamini qabul qilish"""
     if message.text == "⬅️ Ortga":
         data = await state.get_data()
-        await state.set_state(DeleteMovieStates.waiting_for_movie_selection)
+        current_page = data.get('current_page', 1)
+        await state.update_data(current_page=current_page)
         await show_category_page(message, state)
         return
     
@@ -1521,33 +1587,59 @@ async def handle_movie_number(message: Message, state: FSMContext):
 
 async def show_movie_confirmation(message: Message, state: FSMContext, movie):
     """Film o'chirishni tasdiqlash sahifasini ko'rsatish"""
-    movie_info = f"""🎬 **Film ma'lumotlari:**
+    try:
+        # Film ma'lumotlarini olish
+        movie_id = movie[0] if len(movie) > 0 else "N/A"
+        movie_title = movie[3] if len(movie) > 3 else "Noma'lum"
+        description = movie[4] if len(movie) > 4 else "Tavsif yo'q"
+        main_category = movie[1] if len(movie) > 1 else "Noma'lum"
+        sub_category = movie[2] if len(movie) > 2 else "Noma'lum"
+        language = movie[7] if len(movie) > 7 else "Noma'lum"
+        views = movie[8] if len(movie) > 8 else 0
+        added_date = movie[9] if len(movie) > 9 else "Noma'lum"
+        is_premium = movie[10] == 1 if len(movie) > 10 else False
+        
+        # Ma'lumotlarni formatlash
+        added_date_display = added_date[:19] if added_date != "Noma'lum" else "Noma'lum"
+        description_short = description[:100] + '...' if len(description) > 100 else description
+        
+        movie_info = f"""🎬 **Film ma'lumotlari:**
 
-🆔 **ID:** {movie[0]}
-📛 **Nomi:** {movie[3]}
-📖 **Tavsif:** {movie[4][:100]}{'...' if len(movie[4]) > 100 else ''}
-🗂️ **Kategoriya:** {movie[1]}
-📂 **Ichki kategoriya:** {movie[2]}
-🌐 **Til:** {movie[7]}
-💰 **Holat:** {'Pullik' if movie[10] == 1 else 'Bepul'}
-👁️ **Ko'rishlar:** {movie[8]}
-📅 **Qo'shilgan:** {movie[9][:19]}
+🆔 **ID:** {movie_id}
+📛 **Nomi:** {movie_title}
+📖 **Tavsif:** {description_short}
+🗂️ **Kategoriya:** {main_category}
+📂 **Ichki kategoriya:** {sub_category}
+🌐 **Til:** {language}
+💰 **Holat:** {'Pullik' if is_premium else 'Bepul'}
+👁️ **Ko'rishlar:** {views}
+📅 **Qo'shilgan:** {added_date_display}
 
 ⚠️ **DIQQAT:** Bu filmni o'chirsangiz, uning barcha statistikasi va loglari ham o'chiriladi!
 
 ❓ **Bu filmini o'chirishni tasdiqlaysizmi?**"""
-    
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="✅ Ha, o'chirish"), KeyboardButton(text="❌ Yo'q, bekor qilish")],
-            [KeyboardButton(text="⬅️ Ortga kategoriyalarga")]
-        ],
-        resize_keyboard=True
-    )
-    
-    await state.update_data(selected_movie=movie)
-    await message.answer(movie_info, reply_markup=keyboard)
-    await state.set_state(DeleteMovieStates.waiting_for_confirmation)
+        
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="✅ Ha, o'chirish"), KeyboardButton(text="❌ Yo'q, bekor qilish")],
+                [KeyboardButton(text="⬅️ Ortga kategoriyalarga")]
+            ],
+            resize_keyboard=True
+        )
+        
+        await state.update_data(selected_movie=movie, selected_movie_id=movie_id)
+        await message.answer(movie_info, reply_markup=keyboard)
+        await state.set_state(DeleteMovieStates.waiting_for_confirmation)
+        
+    except Exception as e:
+        print(f"Error in show_movie_confirmation: {e}")
+        await message.answer(
+            "❌ Film ma'lumotlarini ko'rsatishda xatolik!",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="⬅️ Ortga")]],
+                resize_keyboard=True
+            )
+        )
 
 # ==================== DELETE ALL MOVIES ====================
 @admin_router.message(DeleteMovieStates.waiting_for_all_confirmation)
